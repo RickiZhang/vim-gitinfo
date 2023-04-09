@@ -1,6 +1,8 @@
 # vim-gitinfo
 A vim plugin created by ChatGPT-4 (and me) to display the last commit info of current line.
 
+![image](./gitinfo.gif)
+
 This plugin code is mostly written by ChatGPT-4. What I did is telling ChatGPT-4 what I want 
 and fix thoes bugs that ChatGPT-4 cannot handle itself (after I instruct him for infinite times).
 
