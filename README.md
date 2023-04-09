@@ -17,5 +17,6 @@ Just stop moving the cursor for about 1.5 sec and a commit info line will be pop
 also used to disable it).
 + It won't show anything if the working directory of current vim process does not contain a .git directory.
 + Better disable it before enter from normal to other modes
-
++ I know there are many plugins that contains the same feature and work way better than mine. So this is yet another example to show 
+what ChatGPT-4 can do.
 
