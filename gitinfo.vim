@@ -1,119 +1,81 @@
-function! GetLastCommitterInfo()
-    let l:current_line = line('.')
-    let l:file_path = expand('%:p')
-    let l:blame_output = system('git blame -L ' . l:current_line . ',' . l:current_line . ' --date=relative ' . l:file_path)
-    let l:committer = matchstr(l:blame_output, '(\zs\S\+\ze\s')
-    let l:time_since_commit = matchstr(l:blame_output, '(\S\+\s\+\zs.\+ago\ze')
-    let l:commit_hash = matchstr(l:blame_output, '^\zs\S\+\ze\s')
-    let l:commit_log_list = system('git log --format=format:"%H %s"')
-    let l:commit_message = matchstr(l:commit_log_list, l:commit_hash . '\S*\s\+\zs[^\n]*\ze')
-    return {'committer': l:committer, 'time_since_commit': l:time_since_commit, 'commit_message': l:commit_message, 'hash': l:commit_hash}
-endfunction
-
 let g:gitinfo_enable = 0
-
-let s:timer = -1
 let s:vim_start_up = 0
+let s:is_in_normal = 1
 let s:current_line = -1
-let s:current_col = -1
-let s:commit_info_displayed = 0 
-let s:no_trigger_cursor_move = 0
-let s:sign_id = -1
-let s:undo_point = -1
-
-highlight CommittersInfoLine ctermfg=Black guifg=Black ctermbg=Yellow guibg=Yellow
-sign define CommitInfoLine linehl=CommittersInfoLine
+let s:is_handling_move = 0
+" infoboard plugin info
+let s:infoboard_agent = v:null
+let s:all_line_commit_info = []
+let s:last_line_commit_info = ""
 
 function! s:ShowLastCommitter()
-    let s:no_trigger_cursor_move = 1
-    let l:committer_info = GetLastCommitterInfo()
-    let l:message = "last commit: [" . l:committer_info.committer .  "] [" . l:committer_info.time_since_commit. "] [" . l:committer_info.commit_message . "]"
-    " call popup_atcursor(l:message, {
-    "         \ 'pos': 'botleft',
-    "         \ 'wrap': 0,
-    "         \ 'border': [],
-    "         \ 'padding': [0, 1, 0, 1],
-    "         \ 'time': 5000,
-    "         \ 'zindex': 200,
-    "         \ })
-    let l:cur_line_after_insert = line('.') + 1
-    let l:cur_col = col('.')
-    
-    let s:undo_point = undotree().seq_cur
-
-    normal! 0
-    noautocmd execute 'normal! O' . l:message . "\<Esc>"
-    let s:sign_id = sign_place(0, '', 'CommitInfoLine', bufnr('%'), {'lnum': s:current_line, 'priority': 1000})
-    call cursor(l:cur_line_after_insert, l:cur_col)
-   
-    let s:current_line = line('.')
-    let s:current_col = col('.')
-    let s:commit_info_displayed = 1
-    let s:no_trigger_cursor_move = 0
-endfunction
-
-let s:remove_cnt = 0
-
-function! s:RestoreCursor(timer_id)
-    call cursor(s:current_line, s:current_col)
-endfunction
-
-function! s:RemoveCommitInfo(call_by_cursor_moved)
-    if s:commit_info_displayed == 0
+    " get the last commiter info of the current line
+    " let l:committer_info = GetLastCommitterInfo()
+    let l:current_line = line('.')
+    if l:current_line > len(s:all_line_commit_info)
+        echom 'current lineno:' . l:current_line . ' is greater than commit info cache size:' . len(s:all_line_commit_info)
         return
     endif
-    let s:no_trigger_cursor_move = 1
-    let l:cur_line_after_delete = line('.') - 1
-    let l:cur_col = col('.')
-
-    " normal! u
-    noautocmd execute 'undo ' . s:undo_point
-    let s:undo_point = -1
-
-    if s:sign_id != -1
-        call sign_unplace('', {'id': s:sign_id, 'buffer': bufnr('%')})
-        let s:sign_id = -1
+    "let l:start_time = reltime()
+    let l:committer_info = s:all_line_commit_info[l:current_line - 1]
+    let l:message = "last commit: [" . l:committer_info.committer .  "] [" . l:committer_info.date. "] [" . l:committer_info.message . "]"
+    if len(s:last_line_commit_info) == 0 || s:last_line_commit_info != l:message
+        call s:infoboard_agent.SetLine('gitinfo', 1, l:message)
+        let s:last_line_commit_info = l:message
     endif
-
-    call cursor(l:cur_line_after_delete, l:cur_col)
-
-    let s:current_line = line('.')
-    let s:current_col = l:cur_col
-    let s:commit_info_displayed = 0
-    let s:no_trigger_cursor_move = 0
-    if !a:call_by_cursor_moved
-        call timer_start(10, function('s:RestoreCursor'))
-    endif
+    " echom 'show last commiter elapsed time:' . reltimestr(reltime(l:start_time))
 endfunction
 
-function! s:CheckCanTrigger()
-    return g:gitinfo_enable != 0 && s:no_trigger_cursor_move == 0 && s:current_line != line('.')
-endfunction
-
-function! s:CheckCursor(timer_id)
-    let l:current_line_content = getline('.')
-    if !s:CheckCanTrigger() && !empty(trim(l:current_line_content))
-        call s:ShowLastCommitter()
+" get commit info of all current buffer lines
+function! s:onBufEnter()
+    if g:gitinfo_enable == 0
+        return
     endif
+    let l:filename = bufname(bufnr())
+    " buffer must be associated with a file that is tracked by git
+    if !filereadable(l:filename) || isdirectory(l:filename)
+        echom 'onBufEnter: ' . l:filename . ' not a readable file'
+        return
+    endif
+    if len(system('git ls-files ' . l:filename)) == 0
+        echom 'onBufEnter: ' . l:filename . ' not tracked by git'
+        return
+    endif 
+    let l:start_time = reltime()
+    " precompute all the line commit infos
+    let s:all_line_commit_info = []
+    let l:raw_line_commit_info = split(system('git blame --date=relative ' . l:filename), '\n')
+    let l:commit_log_list = system('git log --format=format:"%H %s"')
+    for raw_commit_info in l:raw_line_commit_info
+        let l:committer = matchstr(raw_commit_info, '(\zs\S\+\ze\s')
+        let l:time_since_commit = matchstr(raw_commit_info, '(\S\+\s\+\zs.\+ago\ze')
+        let l:commit_hash = matchstr(raw_commit_info, '^\zs\S\+\ze\s')
+        let l:commit_message = matchstr(l:commit_log_list, l:commit_hash . '\S*\s\+\zs[^\n]*\ze')
+        let l:line_commit_info = { 'committer': l:committer, 'date': l:time_since_commit, 'message': l:commit_message }
+        call add(s:all_line_commit_info, l:line_commit_info)
+    endfor
+    echom 'update all_line_commit_info elapsed time:' . reltimestr(reltime(l:start_time))
 endfunction
 
 function! s:CursorMoved()
-    if !s:CheckCanTrigger()
-        return 
-    endif
     if s:vim_start_up == 0
         let s:vim_start_up = 1
         return
     endif
-    if s:timer != -1
-        call timer_stop(s:timer)
+    if g:gitinfo_enable == 0 || s:is_in_normal == 0 || s:infoboard_agent is# v:null || s:is_handling_move == 1
+        return 
     endif
-    if s:commit_info_displayed == 1
-        call s:RemoveCommitInfo(1 == 1)
+    let l:bufname = bufname(bufnr())
+    if !filereadable(getcwd() . '/' . l:bufname) || isdirectory(getcwd() . '/' . l:bufname)
+        return
     endif
+    if s:current_line == line('.')
+        return
+    endif
+    let s:is_handling_move = 1
     let s:current_line = line('.')
-    let s:current_col = col('.')
-    let s:timer = timer_start(1500, function('s:CheckCursor'))
+    call s:ShowLastCommitter()
+    let s:is_handling_move = 0
 endfunction
 
 function! s:ToggleGitInfo()
@@ -121,42 +83,30 @@ function! s:ToggleGitInfo()
         return
     endif
     if g:gitinfo_enable == 1
-        let v:char = "xxoo"
-        if s:timer != -1
-            call timer_stop(s:timer)
-        endif
-        if s:commit_info_displayed == 1
-            call s:RemoveCommitInfo(1 == 0)
-        endif
-        let s:timer = -1
-        let s:last_pos = [-1, -1]
-        let s:current_line = -1
-        let s:current_col = -1
-        let s:commit_info_displayed = 0
-        let s:no_trigger_cursor_move = 0
         let g:gitinfo_enable = 0
     else
-        let s:vim_start_up = 1
         let g:gitinfo_enable = 1
+        let s:current_line = -1
+        call s:onBufEnter()
+        call s:CursorMoved()
     endif
 endfunction
 
-function! s:ExitNormal()
-    if s:no_trigger_cursor_move == 1
+function! s:RegisterToInfoboard()
+    if !exists('g:loaded_infoboard') || g:loaded_infoboard == 0
         return
     endif
-    if s:timer != -1
-        call timer_stop(s:timer)
-    endif
-    if s:commit_info_displayed == 1
-        call s:RemoveCommitInfo(1 == 0)
-    endif
-    let s:timer = -1
-    let s:commit_info_displayed = 0
+    let s:infoboard_agent = GetInfoboardAgent()
+    call s:infoboard_agent.RegisterInfoSource('gitinfo')
+    noautocmd call s:infoboard_agent.SetLine('gitinfo', 1, ' ')
 endfunction
 
 command! ToggleGitInfo call s:ToggleGitInfo()
 
+autocmd VimEnter * call s:RegisterToInfoboard()
 autocmd CursorMoved * call s:CursorMoved()
-autocmd InsertEnter * call s:ExitNormal()
-autocmd CmdlineEnter * call s:ExitNormal()
+autocmd BufEnter * call s:onBufEnter()
+autocmd InsertEnter * let s:is_in_normal = 0
+autocmd CmdlineEnter * let s:is_in_normal = 0
+autocmd InsertLeave * let s:is_in_normal = 1
+autocmd CmdlineLeave * let s:is_in_normal = 1
