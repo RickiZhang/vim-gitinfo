@@ -7,7 +7,7 @@ This plugin code is mostly written by ChatGPT-4. What I did is telling ChatGPT-4
 and fix thoes bugs that ChatGPT-4 cannot handle itself (after I instruct him for infinite times).
 
 ## prerequisite
-This plugin depends on another plugin [`infoboard`]()
+This plugin depends on another plugin [`infoboard`](https://github.com/RickiZhang/vim-infoboard)
 
 ## installation
 Just create a directory `gitinfo` under `~/.vim/plugin/`, and place the gitinfo.vim into it
