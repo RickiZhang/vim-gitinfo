@@ -78,20 +78,6 @@ function! s:CursorMoved()
     let s:is_handling_move = 0
 endfunction
 
-function! s:ToggleGitInfo()
-    if !isdirectory(getcwd() . '/.git')
-        return
-    endif
-    if g:gitinfo_enable == 1
-        let g:gitinfo_enable = 0
-    else
-        let g:gitinfo_enable = 1
-        let s:current_line = -1
-        call s:onBufEnter()
-        call s:CursorMoved()
-    endif
-endfunction
-
 function! s:RegisterToInfoboard()
     if !exists('g:loaded_infoboard') || g:loaded_infoboard == 0
         return
@@ -101,9 +87,32 @@ function! s:RegisterToInfoboard()
     noautocmd call s:infoboard_agent.SetLine('gitinfo', 1, ' ')
 endfunction
 
+function! s:UnRegisterToInfoboard()
+    if !exists('g:loaded_infoboard') || g:loaded_infoboard == 0
+        return
+    endif
+    let s:infoboard_agent = GetInfoboardAgent()
+    call s:infoboard_agent.UnRegisterInfoSource('gitinfo')
+endfunction
+
+function! s:ToggleGitInfo()
+    if !isdirectory(getcwd() . '/.git')
+        return
+    endif
+    if g:gitinfo_enable == 1
+        let g:gitinfo_enable = 0
+        call s:UnRegisterToInfoboard()
+    else
+        let g:gitinfo_enable = 1
+        let s:current_line = -1
+        call s:RegisterToInfoboard()
+        call s:onBufEnter()
+        call s:CursorMoved()
+    endif
+endfunction
+
 command! ToggleGitInfo call s:ToggleGitInfo()
 
-autocmd VimEnter * call s:RegisterToInfoboard()
 autocmd CursorMoved * call s:CursorMoved()
 autocmd BufEnter * call s:onBufEnter()
 autocmd InsertEnter * let s:is_in_normal = 0
