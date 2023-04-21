@@ -7,28 +7,63 @@ let s:is_handling_move = 0
 let s:infoboard_agent = v:null
 let s:all_line_commit_info = []
 let s:last_line_commit_info = ""
+let s:is_wait_server = 0 
 
 function! s:ShowLastCommitter()
-    " get the last commiter info of the current line
-    " let l:committer_info = GetLastCommitterInfo()
     let l:current_line = line('.')
     if l:current_line > len(s:all_line_commit_info)
-        echom 'current lineno:' . l:current_line . ' is greater than commit info cache size:' . len(s:all_line_commit_info)
+        echom "current_lineno:" . l:current_line . " greater than all commit info size:" . len(s:all_line_commit_info)
         return
     endif
-    "let l:start_time = reltime()
     let l:committer_info = s:all_line_commit_info[l:current_line - 1]
-    let l:message = "last commit: [" . l:committer_info.committer .  "] [" . l:committer_info.date. "] [" . l:committer_info.message . "]"
-    if len(s:last_line_commit_info) == 0 || s:last_line_commit_info != l:message
-        call s:infoboard_agent.SetLine('gitinfo', 1, l:message)
-        let s:last_line_commit_info = l:message
+    if len(s:last_line_commit_info) == 0 || s:last_line_commit_info != l:committer_info
+        call s:infoboard_agent.SetLine('gitinfo', 1, l:committer_info)
+        let s:last_line_commit_info = l:committer_info
     endif
-    " echom 'show last commiter elapsed time:' . reltimestr(reltime(l:start_time))
+endfunction
+
+let s:gitinfo_server_job = v:null
+
+function! s:OnGitInfoServerMsg(channel, msg)
+    if a:msg == ""
+        let s:is_wait_server = 0
+        noautocmd call s:ShowLastCommitter()
+    else
+        call add(s:all_line_commit_info, a:msg)
+    endif
+endfunction
+
+function! s:OnGitInfoServerErr(channel, msg)
+    echom "gitinfo error: " . a:msg
+endfunction
+
+function! s:OnGitInfoServerExit(job, status)
+    call job_stop(s:gitinfo_server_job)
+    let s:gitinfo_server_job = v:null
+    let s:last_line_commit_info = ""
+    let s:all_line_commit_info = []
+    let s:is_wait_server = 0
+    echom "gitinfo server exit"
+endfunction
+
+function! s:LaunchGitInfoServer()
+    let s:gitinfo_server_job = job_start(['lua', $HOME . '/.vim/plugin/gitinfo2/gitinfo_server.lua'], {
+                \ 'out_cb': function('s:OnGitInfoServerMsg'),
+                \ 'err_cb': function('s:OnGitInfoServerErr'),
+                \ 'exit_cb': function('s:OnGitInfoServerExit'),
+                \ 'cwd': getcwd()
+                \})
+    if job_status(s:gitinfo_server_job) != 'run'
+        echom 'failed to launch gitinfo server, status:' . job_status(s:gitinfo_server_job)
+        let s:gitinfo_server_job = v:null
+        return 1
+    endif
+    return 0
 endfunction
 
 " get commit info of all current buffer lines
 function! s:onBufEnter()
-    if g:gitinfo_enable == 0
+    if g:gitinfo_enable == 0 || s:gitinfo_server_job is v:null
         return
     endif
     let l:filename = bufname(bufnr())
@@ -38,23 +73,14 @@ function! s:onBufEnter()
         return
     endif
     if len(system('git ls-files ' . l:filename)) == 0
-        echom 'onBufEnter: ' . l:filename . ' not tracked by git'
+         echom 'onBufEnter: ' . l:filename . ' not tracked by git'
         return
     endif 
-    let l:start_time = reltime()
-    " precompute all the line commit infos
+    call ch_sendraw(job_getchannel(s:gitinfo_server_job), l:filename . "\n")
     let s:all_line_commit_info = []
-    let l:raw_line_commit_info = split(system('git blame --date=relative ' . l:filename), '\n')
-    let l:commit_log_list = system('git log --format=format:"%H %s"')
-    for raw_commit_info in l:raw_line_commit_info
-        let l:committer = matchstr(raw_commit_info, '(\zs\S\+\ze\s')
-        let l:time_since_commit = matchstr(raw_commit_info, '(\S\+\s\+\zs.\+ago\ze')
-        let l:commit_hash = matchstr(raw_commit_info, '^\zs\S\+\ze\s')
-        let l:commit_message = matchstr(l:commit_log_list, l:commit_hash . '\S*\s\+\zs[^\n]*\ze')
-        let l:line_commit_info = { 'committer': l:committer, 'date': l:time_since_commit, 'message': l:commit_message }
-        call add(s:all_line_commit_info, l:line_commit_info)
-    endfor
-    echom 'update all_line_commit_info elapsed time:' . reltimestr(reltime(l:start_time))
+    let s:is_wait_server = 1
+    let s:last_line_commit_info = ""
+    call s:infoboard_agent.SetLine('gitinfo', 1, "loading git info of current line...")
 endfunction
 
 function! s:CursorMoved()
@@ -62,7 +88,7 @@ function! s:CursorMoved()
         let s:vim_start_up = 1
         return
     endif
-    if g:gitinfo_enable == 0 || s:is_in_normal == 0 || s:infoboard_agent is# v:null || s:is_handling_move == 1
+    if g:gitinfo_enable == 0 || s:is_in_normal == 0 || s:infoboard_agent is v:null || s:is_handling_move == 1
         return 
     endif
     let l:bufname = bufname(bufnr())
@@ -70,6 +96,9 @@ function! s:CursorMoved()
         return
     endif
     if s:current_line == line('.')
+        return
+    endif
+    if s:is_wait_server == 1
         return
     endif
     let s:is_handling_move = 1
@@ -80,11 +109,12 @@ endfunction
 
 function! s:RegisterToInfoboard()
     if !exists('g:loaded_infoboard') || g:loaded_infoboard == 0
-        return
+        return 1
     endif
     let s:infoboard_agent = GetInfoboardAgent()
     call s:infoboard_agent.RegisterInfoSource('gitinfo')
     noautocmd call s:infoboard_agent.SetLine('gitinfo', 1, ' ')
+    return 0
 endfunction
 
 function! s:UnRegisterToInfoboard()
@@ -100,14 +130,25 @@ function! s:ToggleGitInfo()
         return
     endif
     if g:gitinfo_enable == 1
+        if !(s:gitinfo_server_job is v:null)
+            call job_stop(s:gitinfo_server_job)
+        endif
         let g:gitinfo_enable = 0
+        let s:gitinfo_server_job = v:null
+        let s:is_wait_server = 0
+        let s:last_line_commit_info = ""
+        let s:all_line_commit_info = []
         call s:UnRegisterToInfoboard()
     else
+        if 0 != s:LaunchGitInfoServer()
+            return
+        endif
+        if 0 != s:RegisterToInfoboard()
+            return
+        endif
         let g:gitinfo_enable = 1
         let s:current_line = -1
-        call s:RegisterToInfoboard()
         call s:onBufEnter()
-        call s:CursorMoved()
     endif
 endfunction
 
