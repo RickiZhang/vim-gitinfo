@@ -47,7 +47,7 @@ function! s:OnGitInfoServerExit(job, status)
 endfunction
 
 function! s:LaunchGitInfoServer()
-    let s:gitinfo_server_job = job_start(['lua', $HOME . '/.vim/plugin/gitinfo2/gitinfo_server.lua'], {
+    let s:gitinfo_server_job = job_start(['lua', $HOME . '/.vim/plugin/gitinfo/gitinfo_server.lua'], {
                 \ 'out_cb': function('s:OnGitInfoServerMsg'),
                 \ 'err_cb': function('s:OnGitInfoServerErr'),
                 \ 'exit_cb': function('s:OnGitInfoServerExit'),
