@@ -11,7 +11,7 @@ and fix thoes bugs that ChatGPT-4 cannot handle itself (after I instruct him for
 + This plugin depends on another plugin [`infoboard`](https://github.com/RickiZhang/vim-infoboard)
 
 ## installation
-Just create a directory `gitinfo` under `~/.vim/plugin/`, and place the gitinfo.vim into it
+Just create a directory `gitinfo` under `~/.vim/plugin/`, and place the gitinfo.vim and gitinfo_server.lua into it
 
 ## usage
 Type `:ToggleGitInfo` in the command line to enable or disable this plugin, commit info will be displayed
